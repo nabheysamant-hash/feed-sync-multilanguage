@@ -10,9 +10,11 @@ Screen 1 — Choose sync type: Single Language or Multi-Language
 Run:  streamlit run app.py
 """
 
+import base64
 import csv
 import io
 import json
+import os
 import re
 import time
 import unicodedata
@@ -23,93 +25,39 @@ import streamlit as st
 from streamlit.components.v1 import html as st_html
 
 # ---------------------------------------------------------------------------
-# Sound effects (Web Audio API + Speech Synthesis — no external files)
+# Sound effects — custom MP3 embedded as base64
 # ---------------------------------------------------------------------------
 
-def _shout_js(message: str) -> str:
-    """Generate JS that plays a victory jingle then shouts a message via TTS."""
+_SOUND_DIR = os.path.dirname(os.path.abspath(__file__))
+
+@st.cache_data
+def _load_success_sound_b64() -> str:
+    """Load success_sound.mp3 and return base64-encoded string."""
+    path = os.path.join(_SOUND_DIR, "success_sound.mp3")
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
+
+def _play_audio_js(b64: str) -> str:
     return f"""
 <script>
 (function(){{
-  // --- Victory jingle ---
-  const AC = new (window.AudioContext || window.webkitAudioContext)();
-  const notes = [
-    [523.25,0.10],[659.25,0.10],[783.99,0.10],
-    [1046.50,0.15],[783.99,0.08],[1046.50,0.25]
-  ];
-  let t = AC.currentTime + 0.05;
-  notes.forEach(([freq, dur]) => {{
-    const o = AC.createOscillator();
-    const g = AC.createGain();
-    o.type = 'square';
-    o.frequency.value = freq;
-    g.gain.setValueAtTime(0.15, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(g); g.connect(AC.destination);
-    o.start(t); o.stop(t + dur);
-    t += dur;
-  }});
-  // --- Shout it out via TTS ---
-  setTimeout(() => {{
-    const u = new SpeechSynthesisUtterance("{message}");
-    u.rate = 1.1;
-    u.pitch = 1.3;
-    u.volume = 1.0;
-    window.speechSynthesis.speak(u);
-  }}, 800);
-}})();
-</script>
-"""
-
-
-def _fanfare_js(message: str) -> str:
-    """Generate JS that plays a big stage-clear fanfare then shouts a message."""
-    return f"""
-<script>
-(function(){{
-  const AC = new (window.AudioContext || window.webkitAudioContext)();
-  const melody = [
-    [392.00,0.10],[392.00,0.10],[392.00,0.10],
-    [523.25,0.30],
-    [466.16,0.10],[523.25,0.10],[587.33,0.10],[659.25,0.10],
-    [783.99,0.10],[659.25,0.10],[783.99,0.10],
-    [1046.50,0.40],
-    [1318.51,0.15],[1567.98,0.50]
-  ];
-  let t = AC.currentTime + 0.05;
-  melody.forEach(([freq, dur]) => {{
-    const o = AC.createOscillator();
-    const g = AC.createGain();
-    o.type = 'square';
-    o.frequency.value = freq;
-    g.gain.setValueAtTime(0.18, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur * 0.95);
-    o.connect(g); g.connect(AC.destination);
-    o.start(t); o.stop(t + dur);
-    t += dur;
-  }});
-  setTimeout(() => {{
-    const u = new SpeechSynthesisUtterance("{message}");
-    u.rate = 0.95;
-    u.pitch = 1.4;
-    u.volume = 1.0;
-    window.speechSynthesis.speak(u);
-  }}, 2200);
+  const audio = new Audio("data:audio/mp3;base64,{b64}");
+  audio.volume = 1.0;
+  audio.play();
 }})();
 </script>
 """
 
 
 def play_powerup():
-    """Victory jingle + shout for intermediate sync steps."""
-    st_html(_shout_js("Feed sync completed! Let's gooo!"), height=0)
+    """Play custom success sound for intermediate sync steps."""
+    st_html(_play_audio_js(_load_success_sound_b64()), height=0)
 
 
 def play_stage_clear():
-    """Big fanfare + shout for final multi-language sync."""
-    st_html(_fanfare_js(
-        "All feeds synced successfully! You are a legend!"
-    ), height=0)
+    """Play custom success sound for final multi-language sync."""
+    st_html(_play_audio_js(_load_success_sound_b64()), height=0)
 
 
 # ---------------------------------------------------------------------------
