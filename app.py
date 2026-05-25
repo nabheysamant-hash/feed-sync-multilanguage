@@ -23,49 +23,61 @@ import streamlit as st
 from streamlit.components.v1 import html as st_html
 
 # ---------------------------------------------------------------------------
-# Sound effects (Web Audio API — no external files needed)
+# Sound effects (Web Audio API + Speech Synthesis — no external files)
 # ---------------------------------------------------------------------------
 
-_MARIO_POWERUP_JS = """
+def _shout_js(message: str) -> str:
+    """Generate JS that plays a victory jingle then shouts a message via TTS."""
+    return f"""
 <script>
-(function(){
+(function(){{
+  // --- Victory jingle ---
   const AC = new (window.AudioContext || window.webkitAudioContext)();
   const notes = [
-    [523.25,0.08],[659.25,0.08],[783.99,0.08],
-    [1046.50,0.08],[1318.51,0.08],[1567.98,0.15],
-    [1318.51,0.12],[1567.98,0.20]
+    [523.25,0.10],[659.25,0.10],[783.99,0.10],
+    [1046.50,0.15],[783.99,0.08],[1046.50,0.25]
   ];
   let t = AC.currentTime + 0.05;
-  notes.forEach(([freq, dur]) => {
+  notes.forEach(([freq, dur]) => {{
     const o = AC.createOscillator();
     const g = AC.createGain();
     o.type = 'square';
     o.frequency.value = freq;
-    g.gain.setValueAtTime(0.18, t);
+    g.gain.setValueAtTime(0.15, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     o.connect(g); g.connect(AC.destination);
     o.start(t); o.stop(t + dur);
     t += dur;
-  });
-})();
+  }});
+  // --- Shout it out via TTS ---
+  setTimeout(() => {{
+    const u = new SpeechSynthesisUtterance("{message}");
+    u.rate = 1.1;
+    u.pitch = 1.3;
+    u.volume = 1.0;
+    window.speechSynthesis.speak(u);
+  }}, 800);
+}})();
 </script>
 """
 
-_MARIO_STAGE_CLEAR_JS = """
+
+def _fanfare_js(message: str) -> str:
+    """Generate JS that plays a big stage-clear fanfare then shouts a message."""
+    return f"""
 <script>
-(function(){
+(function(){{
   const AC = new (window.AudioContext || window.webkitAudioContext)();
   const melody = [
-    [392.00,0.12],[392.00,0.12],[392.00,0.12],
-    [523.25,0.35],
-    [523.25,0.12],[587.33,0.12],[659.25,0.12],
-    [783.99,0.12],[659.25,0.12],[783.99,0.12],
-    [1046.50,0.45],
-    [783.99,0.12],[1046.50,0.12],[1318.51,0.12],
-    [1567.98,0.50]
+    [392.00,0.10],[392.00,0.10],[392.00,0.10],
+    [523.25,0.30],
+    [466.16,0.10],[523.25,0.10],[587.33,0.10],[659.25,0.10],
+    [783.99,0.10],[659.25,0.10],[783.99,0.10],
+    [1046.50,0.40],
+    [1318.51,0.15],[1567.98,0.50]
   ];
   let t = AC.currentTime + 0.05;
-  melody.forEach(([freq, dur]) => {
+  melody.forEach(([freq, dur]) => {{
     const o = AC.createOscillator();
     const g = AC.createGain();
     o.type = 'square';
@@ -75,20 +87,29 @@ _MARIO_STAGE_CLEAR_JS = """
     o.connect(g); g.connect(AC.destination);
     o.start(t); o.stop(t + dur);
     t += dur;
-  });
-})();
+  }});
+  setTimeout(() => {{
+    const u = new SpeechSynthesisUtterance("{message}");
+    u.rate = 0.95;
+    u.pitch = 1.4;
+    u.volume = 1.0;
+    window.speechSynthesis.speak(u);
+  }}, 2200);
+}})();
 </script>
 """
 
 
 def play_powerup():
-    """Mario power-up sound 🍄"""
-    st_html(_MARIO_POWERUP_JS, height=0)
+    """Victory jingle + shout for intermediate sync steps."""
+    st_html(_shout_js("Feed sync completed! Let's gooo!"), height=0)
 
 
 def play_stage_clear():
-    """Mario stage-clear fanfare 🏁"""
-    st_html(_MARIO_STAGE_CLEAR_JS, height=0)
+    """Big fanfare + shout for final multi-language sync."""
+    st_html(_fanfare_js(
+        "All feeds synced successfully! You are a legend!"
+    ), height=0)
 
 
 # ---------------------------------------------------------------------------
@@ -462,6 +483,7 @@ elif current == "multi_step1":
             result = run_v2_sync(retailer_id, token, products, progress, status)
             if result.failed == 0:
                 st.success(f"**{result.synced:,}/{result.total:,}** products synced ✅")
+                st.session_state["v2_sync_done"] = True
                 play_powerup()
             else:
                 st.error(f"{result.synced:,} synced, {result.failed:,} failed ❌")
@@ -470,9 +492,12 @@ elif current == "multi_step1":
                     st.text(line)
 
         st.markdown("---")
-        if st.button("Next → Multi-Language Sync", type="primary", use_container_width=True):
-            go_to("multi_step2")
-            st.rerun()
+        if st.session_state.get("v2_sync_done"):
+            if st.button("Next → Multi-Language Sync", type="primary", use_container_width=True):
+                go_to("multi_step2")
+                st.rerun()
+        else:
+            st.info("Complete Feed V2 sync successfully to proceed to the next step.")
 
 
 # =====================================================================
@@ -539,6 +564,7 @@ elif current == "multi_step2":
             result = run_ml_sync(retailer_id, token, ml_lang, products_raw, progress, status)
             if result.failed == 0:
                 st.success(f"**{result.synced:,}/{result.total:,}** products synced ✅  (language=`{ml_lang}`)")
+                st.session_state["ml_sync_done"] = True
                 play_stage_clear()
             else:
                 st.error(f"{result.synced:,} synced, {result.failed:,} failed ❌")
@@ -553,9 +579,12 @@ elif current == "multi_step2":
             go_to("multi_step1")
             st.rerun()
     with c_next:
-        if st.button("Next → cURL Generator", type="primary", use_container_width=True):
-            go_to("multi_step3")
-            st.rerun()
+        if st.session_state.get("ml_sync_done"):
+            if st.button("Next → cURL Generator", type="primary", use_container_width=True):
+                go_to("multi_step3")
+                st.rerun()
+        else:
+            st.info("Complete ML sync successfully to proceed.")
 
 
 # =====================================================================
