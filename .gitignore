@@ -1,0 +1,24 @@
+# Credentials & config with secrets
+config.yaml
+
+# Test scripts
+test_ml.py
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Data files
+*.csv
+*.tsv
