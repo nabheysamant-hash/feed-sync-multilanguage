@@ -20,6 +20,76 @@ from dataclasses import dataclass, field
 
 import requests
 import streamlit as st
+from streamlit.components.v1 import html as st_html
+
+# ---------------------------------------------------------------------------
+# Sound effects (Web Audio API — no external files needed)
+# ---------------------------------------------------------------------------
+
+_MARIO_POWERUP_JS = """
+<script>
+(function(){
+  const AC = new (window.AudioContext || window.webkitAudioContext)();
+  const notes = [
+    [523.25,0.08],[659.25,0.08],[783.99,0.08],
+    [1046.50,0.08],[1318.51,0.08],[1567.98,0.15],
+    [1318.51,0.12],[1567.98,0.20]
+  ];
+  let t = AC.currentTime + 0.05;
+  notes.forEach(([freq, dur]) => {
+    const o = AC.createOscillator();
+    const g = AC.createGain();
+    o.type = 'square';
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0.18, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(g); g.connect(AC.destination);
+    o.start(t); o.stop(t + dur);
+    t += dur;
+  });
+})();
+</script>
+"""
+
+_MARIO_STAGE_CLEAR_JS = """
+<script>
+(function(){
+  const AC = new (window.AudioContext || window.webkitAudioContext)();
+  const melody = [
+    [392.00,0.12],[392.00,0.12],[392.00,0.12],
+    [523.25,0.35],
+    [523.25,0.12],[587.33,0.12],[659.25,0.12],
+    [783.99,0.12],[659.25,0.12],[783.99,0.12],
+    [1046.50,0.45],
+    [783.99,0.12],[1046.50,0.12],[1318.51,0.12],
+    [1567.98,0.50]
+  ];
+  let t = AC.currentTime + 0.05;
+  melody.forEach(([freq, dur]) => {
+    const o = AC.createOscillator();
+    const g = AC.createGain();
+    o.type = 'square';
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0.18, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur * 0.95);
+    o.connect(g); g.connect(AC.destination);
+    o.start(t); o.stop(t + dur);
+    t += dur;
+  });
+})();
+</script>
+"""
+
+
+def play_powerup():
+    """Mario power-up sound 🍄"""
+    st_html(_MARIO_POWERUP_JS, height=0)
+
+
+def play_stage_clear():
+    """Mario stage-clear fanfare 🏁"""
+    st_html(_MARIO_STAGE_CLEAR_JS, height=0)
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -336,7 +406,7 @@ elif current == "single":
             result = run_v2_sync(retailer_id, token, products, progress, status)
             if result.failed == 0:
                 st.success(f"**{result.synced:,}/{result.total:,}** products synced ✅")
-                st.balloons()
+                play_powerup()
             else:
                 st.error(f"{result.synced:,} synced, {result.failed:,} failed ❌")
             with st.expander("Sync logs"):
@@ -392,7 +462,7 @@ elif current == "multi_step1":
             result = run_v2_sync(retailer_id, token, products, progress, status)
             if result.failed == 0:
                 st.success(f"**{result.synced:,}/{result.total:,}** products synced ✅")
-                st.balloons()
+                play_powerup()
             else:
                 st.error(f"{result.synced:,} synced, {result.failed:,} failed ❌")
             with st.expander("Sync logs"):
@@ -469,7 +539,7 @@ elif current == "multi_step2":
             result = run_ml_sync(retailer_id, token, ml_lang, products_raw, progress, status)
             if result.failed == 0:
                 st.success(f"**{result.synced:,}/{result.total:,}** products synced ✅  (language=`{ml_lang}`)")
-                st.balloons()
+                play_stage_clear()
             else:
                 st.error(f"{result.synced:,} synced, {result.failed:,} failed ❌")
             with st.expander("Sync logs"):
