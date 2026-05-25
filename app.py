@@ -1,9 +1,9 @@
 """
-Osmos Feed Sync — Streamlit UI
+Osmos Feed Sync — Streamlit Multi-Page UI
 
-Two-step sync:
-  Step 1 — Feed Sync V2 (/products)  →  full feed, all fields, no filtering
-  Step 2 — Multi-Language (/products/multiLanguage) →  text fields only + language ISO code
+Page 1 — Feed Sync V2:  full feed, all fields, no filtering
+Page 2 — Multi-Language: text fields only + language ISO code
+Page 3 — cURL Generator: get full cURL for any single SKU
 
 Run:  streamlit run app.py
 """
@@ -31,7 +31,6 @@ RATE_LIMIT = 10
 RETRY_ATTEMPTS = 3
 RETRY_DELAY = 2
 
-# Multi-Language API accepted fields
 ML_FIELDS = {"id", "title", "description", "brand", "category",
              "custom_label_0", "custom_label_1", "custom_label_2",
              "secondary_categories"}
@@ -175,15 +174,13 @@ def run_v2_sync(retailer_id, token, products, progress_bar, status_text):
     for idx, batch in enumerate(batches):
         if idx > 0:
             time.sleep(min_interval)
-        payload = {"products": batch}
-        ok = _post(session, API_FEED_V2, payload, headers, result, f"Batch {idx+1}")
+        ok = _post(session, API_FEED_V2, {"products": batch}, headers, result, f"Batch {idx+1}")
         if ok:
             result.synced += len(batch)
         else:
             result.failed += len(batch)
         progress_bar.progress((idx + 1) / len(batches), text=f"Batch {idx+1}/{len(batches)}")
         status_text.text(f"Synced {result.synced}/{result.total} products")
-
     return result
 
 
@@ -208,18 +205,16 @@ def run_ml_sync(retailer_id, token, language, products, progress_bar, status_tex
             result.failed += len(batch)
         progress_bar.progress((idx + 1) / len(batches), text=f"Batch {idx+1}/{len(batches)}")
         status_text.text(f"Synced {result.synced}/{result.total} products")
-
     return result
 
 
 # ---------------------------------------------------------------------------
-# Streamlit UI
+# Page config
 # ---------------------------------------------------------------------------
 
 st.set_page_config(page_title="Osmos Feed Sync", page_icon="🔄", layout="wide")
-st.title("Osmos Feed Sync")
 
-# ── Sidebar ──
+# ── Sidebar (shared across all pages) ──
 with st.sidebar:
     st.header("API Credentials")
     retailer_id = st.text_input("Retailer ID (x-retailer-id)", type="default",
@@ -231,155 +226,229 @@ with st.sidebar:
     st.header("Settings")
     st.caption(f"Batch: {BATCH_SIZE} | Rate: {RATE_LIMIT} req/s | Retries: {RETRY_ATTEMPTS}")
 
-    st.divider()
-    st.header("Column Remapping")
-    st.caption("Rename CSV columns to match API field names")
-    custom_remap = {}
-    for csv_col, api_col in DEFAULT_REMAP.items():
-        val = st.text_input(f"`{csv_col}` →", value=api_col, key=f"remap_{csv_col}")
-        if val:
-            custom_remap[csv_col] = val
-    remap = {**DEFAULT_REMAP, **custom_remap}
-
 has_creds = bool(retailer_id and token)
+remap = DEFAULT_REMAP
 
-# =====================================================================
-# STEP 1 — Feed Sync V2 (full feed, all fields)
-# =====================================================================
-st.header("Step 1 — Feed Sync V2")
-st.caption("Upload the **full product feed**. All columns are sent as-is to the Feed V2 API — nothing is filtered.")
-
-v2_file = st.file_uploader("Upload feed file (CSV / TSV)", type=["csv", "tsv"], key="v2_file")
-
-if v2_file:
-    v2_fieldnames, v2_rows = parse_csv(v2_file)
-    v2_products, v2_skipped = extract_products(v2_rows, remap)
-
-    st.success(f"**{v2_file.name}** — {len(v2_products):,} products ready · {v2_skipped} skipped · {len(v2_fieldnames)} fields")
-
-    with st.expander("Preview payload (first product)"):
-        if v2_products:
-            st.json(v2_products[0])
-
-    # ── cURL ──
-    with st.expander("cURL for single SKU"):
-        if v2_products:
-            sku_ids_v2 = [p["id"] for p in v2_products]
-            sel_v2 = st.selectbox("Select SKU", sku_ids_v2, key="v2_sku")
-            prod_v2 = next(p for p in v2_products if p["id"] == sel_v2)
-            st.code(_make_curl(API_FEED_V2, retailer_id, token, {"products": [prod_v2]}), language="bash")
-
-    # ── Sync button ──
-    col1, col2 = st.columns(2)
-    with col1:
-        v2_dry = st.button("Dry Run", key="v2_dry", use_container_width=True)
-    with col2:
-        v2_sync = st.button("Sync Feed V2", key="v2_sync", type="primary",
-                            use_container_width=True, disabled=not has_creds)
-
-    if v2_dry and v2_products:
-        st.info(f"**Dry Run:** {len(v2_products):,} products would be sent in "
-                f"{(len(v2_products) + BATCH_SIZE - 1) // BATCH_SIZE} batches.")
-        st.code(json.dumps(v2_products[0], ensure_ascii=False, indent=2), language="json")
-
-    if v2_sync:
-        if not has_creds:
-            st.error("Enter credentials in the sidebar.")
-        elif not v2_products:
-            st.warning("No valid products to sync.")
-        else:
-            progress = st.progress(0, text="Starting Feed V2 sync...")
-            status = st.empty()
-            result = run_v2_sync(retailer_id, token, v2_products, progress, status)
-            if result.failed == 0:
-                st.success(f"Feed V2: **{result.synced:,}/{result.total:,}** products synced ✅")
-            else:
-                st.error(f"Feed V2: {result.synced:,} synced, {result.failed:,} failed ❌")
-            with st.expander("Sync logs"):
-                for line in result.logs:
-                    st.text(line)
-
-st.divider()
-
-# =====================================================================
-# STEP 2 — Multi-Language Sync (text fields only + language code)
-# =====================================================================
-st.header("Step 2 — Multi-Language Sync")
-st.caption(
-    "Upload the **translated feed**. Only text fields "
-    f"(`{'`, `'.join(sorted(ML_FIELDS - {'id'}))}`) are sent to the Multi-Language API with the language code."
+# ── Navigation ──
+page = st.radio(
+    "Navigate",
+    ["1 — Feed Sync V2", "2 — Multi-Language Sync", "3 — cURL Generator"],
+    horizontal=True,
+    label_visibility="collapsed",
 )
 
-ml_file = st.file_uploader("Upload translated feed file (CSV / TSV)", type=["csv", "tsv"], key="ml_file")
+st.markdown("---")
 
-col_lang, _ = st.columns([1, 2])
-with col_lang:
-    lang_keys = list(LANGUAGE_OPTIONS.keys())
-    ml_lang = st.selectbox(
-        "Language ISO code",
-        options=lang_keys,
-        format_func=lambda k: f"{k} — {LANGUAGE_OPTIONS[k]}",
-        index=0,
-        key="ml_lang",
+# =====================================================================
+# PAGE 1 — Feed Sync V2
+# =====================================================================
+if page == "1 — Feed Sync V2":
+    st.header("Step 1 — Feed Sync V2")
+    st.caption("Upload the **full product feed**. All columns are sent as-is to the Feed V2 API — nothing is filtered or removed.")
+
+    v2_file = st.file_uploader("Upload feed file (CSV / TSV)", type=["csv", "tsv"], key="v2_file")
+
+    if v2_file:
+        v2_fieldnames, v2_rows = parse_csv(v2_file)
+        v2_products, v2_skipped = extract_products(v2_rows, remap)
+
+        # Store in session for cURL page
+        st.session_state["v2_products"] = v2_products
+        st.session_state["v2_filename"] = v2_file.name
+
+        col_info, col_fields = st.columns([1, 1])
+        with col_info:
+            st.metric("Products Ready", f"{len(v2_products):,}")
+        with col_fields:
+            st.metric("Fields per Product", len(v2_fieldnames))
+
+        if v2_skipped:
+            st.warning(f"{v2_skipped} rows skipped (missing required fields: id, title, description, brand)")
+
+        with st.expander("Preview payload — first product"):
+            if v2_products:
+                st.json(v2_products[0])
+
+        st.markdown("---")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            v2_dry = st.button("Dry Run", key="v2_dry", use_container_width=True)
+        with col2:
+            v2_sync = st.button("Sync Feed V2", key="v2_sync", type="primary",
+                                use_container_width=True, disabled=not has_creds)
+
+        if not has_creds:
+            st.caption("Enter API credentials in the sidebar to enable sync.")
+
+        if v2_dry and v2_products:
+            n_batches = (len(v2_products) + BATCH_SIZE - 1) // BATCH_SIZE
+            st.info(f"**Dry Run:** {len(v2_products):,} products → {n_batches} batches → Feed V2 API")
+            st.caption("Sample payload (first product):")
+            st.code(json.dumps({"products": [v2_products[0]]}, ensure_ascii=False, indent=2), language="json")
+
+        if v2_sync:
+            if not v2_products:
+                st.warning("No valid products to sync.")
+            else:
+                st.markdown("### Sync Progress")
+                progress = st.progress(0, text="Starting Feed V2 sync...")
+                status = st.empty()
+                result = run_v2_sync(retailer_id, token, v2_products, progress, status)
+
+                if result.failed == 0:
+                    st.success(f"**{result.synced:,}/{result.total:,}** products synced ✅")
+                    st.balloons()
+                else:
+                    st.error(f"{result.synced:,} synced, {result.failed:,} failed ❌")
+
+                with st.expander("Sync logs"):
+                    for line in result.logs:
+                        st.text(line)
+
+                st.info("👉 Next: switch to **Step 2 — Multi-Language Sync** above to sync the translated feed.")
+
+
+# =====================================================================
+# PAGE 2 — Multi-Language Sync
+# =====================================================================
+elif page == "2 — Multi-Language Sync":
+    st.header("Step 2 — Multi-Language Sync")
+    st.caption(
+        "Upload the **translated feed**. Only text fields are sent to the Multi-Language API with the language code."
     )
 
-if ml_file:
-    ml_fieldnames, ml_rows = parse_csv(ml_file)
-    ml_products_raw, ml_skipped = extract_products(ml_rows, remap)
-    ml_products_clean = [ml_only(p) for p in ml_products_raw]
+    ml_file = st.file_uploader("Upload translated feed file (CSV / TSV)", type=["csv", "tsv"], key="ml_file")
 
-    st.success(
-        f"**{ml_file.name}** — {len(ml_products_clean):,} products ready · {ml_skipped} skipped · "
-        f"Language: **{ml_lang}** ({LANGUAGE_OPTIONS.get(ml_lang, ml_lang)})"
-    )
+    col_lang, col_info = st.columns([1, 2])
+    with col_lang:
+        lang_keys = list(LANGUAGE_OPTIONS.keys())
+        ml_lang = st.selectbox(
+            "Language ISO code",
+            options=lang_keys,
+            format_func=lambda k: f"{k} — {LANGUAGE_OPTIONS[k]}",
+            index=0,
+            key="ml_lang",
+        )
+    with col_info:
+        ml_text_fields = sorted(ML_FIELDS - {"id"})
+        st.caption(f"**Fields sent:** `{'`, `'.join(ml_text_fields)}`")
 
-    fields_present = sorted(ml_products_clean[0].keys()) if ml_products_clean else []
-    st.caption(f"Fields sent: `{'`, `'.join(fields_present)}`")
+    if ml_file:
+        ml_fieldnames, ml_rows = parse_csv(ml_file)
+        ml_products_raw, ml_skipped = extract_products(ml_rows, remap)
+        ml_products_clean = [ml_only(p) for p in ml_products_raw]
 
-    with st.expander("Preview ML payload (first product)"):
-        if ml_products_clean:
-            st.json({"language": ml_lang, "products": [ml_products_clean[0]]})
+        # Store in session for cURL page
+        st.session_state["ml_products_raw"] = ml_products_raw
+        st.session_state["ml_products_clean"] = ml_products_clean
+        st.session_state["ml_filename"] = ml_file.name
+        st.session_state["ml_lang_val"] = ml_lang
 
-    # ── cURL ──
-    with st.expander("cURL for single SKU"):
-        if ml_products_clean:
-            sku_ids_ml = [p["id"] for p in ml_products_clean]
-            sel_ml = st.selectbox("Select SKU", sku_ids_ml, key="ml_sku")
-            prod_ml = next(p for p in ml_products_clean if p["id"] == sel_ml)
+        col_m1, col_m2 = st.columns([1, 1])
+        with col_m1:
+            st.metric("Products Ready", f"{len(ml_products_clean):,}")
+        with col_m2:
+            fields_present = sorted(ml_products_clean[0].keys()) if ml_products_clean else []
+            st.metric("ML Fields Found", len(fields_present))
+
+        if ml_skipped:
+            st.warning(f"{ml_skipped} rows skipped (missing required fields)")
+
+        with st.expander("Preview ML payload — first product"):
+            if ml_products_clean:
+                st.json({"language": ml_lang, "products": [ml_products_clean[0]]})
+
+        st.markdown("---")
+
+        col3, col4 = st.columns(2)
+        with col3:
+            ml_dry = st.button("Dry Run", key="ml_dry", use_container_width=True)
+        with col4:
+            ml_sync = st.button("Sync Multi-Language", key="ml_sync", type="primary",
+                                use_container_width=True, disabled=not has_creds)
+
+        if not has_creds:
+            st.caption("Enter API credentials in the sidebar to enable sync.")
+
+        if ml_dry and ml_products_raw:
+            n_batches = (len(ml_products_raw) + BATCH_SIZE - 1) // BATCH_SIZE
+            st.info(f"**Dry Run:** {len(ml_products_raw):,} products → {n_batches} batches → "
+                    f"Multi-Language API (language=`{ml_lang}`)")
+            st.caption("Sample ML payload (first product):")
+            st.code(json.dumps({"language": ml_lang, "products": [ml_products_clean[0]]},
+                               ensure_ascii=False, indent=2), language="json")
+
+        if ml_sync:
+            if not ml_products_raw:
+                st.warning("No valid products to sync.")
+            else:
+                st.markdown("### Sync Progress")
+                progress = st.progress(0, text=f"Starting ML sync (language={ml_lang})...")
+                status = st.empty()
+                result = run_ml_sync(retailer_id, token, ml_lang, ml_products_raw, progress, status)
+
+                if result.failed == 0:
+                    st.success(f"**{result.synced:,}/{result.total:,}** products synced ✅  (language=`{ml_lang}`)")
+                    st.balloons()
+                else:
+                    st.error(f"{result.synced:,} synced, {result.failed:,} failed ❌")
+
+                with st.expander("Sync logs"):
+                    for line in result.logs:
+                        st.text(line)
+
+
+# =====================================================================
+# PAGE 3 — cURL Generator
+# =====================================================================
+elif page == "3 — cURL Generator":
+    st.header("cURL Generator")
+    st.caption("Generate copy-pasteable cURL commands for any single SKU from uploaded feeds.")
+
+    v2_products = st.session_state.get("v2_products", [])
+    ml_products_raw = st.session_state.get("ml_products_raw", [])
+    ml_products_clean = st.session_state.get("ml_products_clean", [])
+    ml_lang = st.session_state.get("ml_lang_val", "ar")
+
+    if not v2_products and not ml_products_clean:
+        st.info("Upload feeds in **Step 1** and/or **Step 2** first — then come here to generate cURLs.")
+        st.stop()
+
+    # Build combined SKU list
+    all_ids = set()
+    v2_by_id = {}
+    ml_by_id = {}
+    for p in v2_products:
+        all_ids.add(p["id"])
+        v2_by_id[p["id"]] = p
+    for p_raw, p_clean in zip(ml_products_raw, ml_products_clean):
+        all_ids.add(p_raw["id"])
+        ml_by_id[p_raw["id"]] = p_clean
+
+    sku_list = sorted(all_ids)
+    selected_sku = st.selectbox("Select SKU (product id)", sku_list, key="curl_sku")
+
+    if selected_sku:
+        has_v2 = selected_sku in v2_by_id
+        has_ml = selected_sku in ml_by_id
+        badges = []
+        if has_v2:
+            badges.append("Feed V2")
+        if has_ml:
+            badges.append(f"Multi-Language ({ml_lang})")
+        st.caption(f"**SKU `{selected_sku}`** available in: {' · '.join(badges)}")
+
+        if has_v2:
+            st.markdown("### Feed V2 cURL")
+            prod = v2_by_id[selected_sku]
+            st.code(_make_curl(API_FEED_V2, retailer_id, token, {"products": [prod]}), language="bash")
+
+        if has_ml:
+            st.markdown(f"### Multi-Language cURL (language=`{ml_lang}`)")
+            prod = ml_by_id[selected_sku]
             st.code(
                 _make_curl(API_MULTI_LANG, retailer_id, token,
-                           {"language": ml_lang, "products": [prod_ml]}),
+                           {"language": ml_lang, "products": [prod]}),
                 language="bash",
             )
-
-    # ── Sync button ──
-    col3, col4 = st.columns(2)
-    with col3:
-        ml_dry = st.button("Dry Run", key="ml_dry", use_container_width=True)
-    with col4:
-        ml_sync = st.button("Sync Multi-Language", key="ml_sync", type="primary",
-                            use_container_width=True, disabled=not has_creds)
-
-    if ml_dry and ml_products_raw:
-        st.info(f"**Dry Run:** {len(ml_products_raw):,} products would be sent in "
-                f"{(len(ml_products_raw) + BATCH_SIZE - 1) // BATCH_SIZE} batches "
-                f"with language=`{ml_lang}`.")
-        st.code(json.dumps({"language": ml_lang, "products": [ml_products_clean[0]]},
-                           ensure_ascii=False, indent=2), language="json")
-
-    if ml_sync:
-        if not has_creds:
-            st.error("Enter credentials in the sidebar.")
-        elif not ml_products_raw:
-            st.warning("No valid products to sync.")
-        else:
-            progress = st.progress(0, text=f"Starting ML sync (language={ml_lang})...")
-            status = st.empty()
-            result = run_ml_sync(retailer_id, token, ml_lang, ml_products_raw, progress, status)
-            if result.failed == 0:
-                st.success(f"Multi-Language ({ml_lang}): **{result.synced:,}/{result.total:,}** products synced ✅")
-            else:
-                st.error(f"Multi-Language ({ml_lang}): {result.synced:,} synced, {result.failed:,} failed ❌")
-            with st.expander("Sync logs"):
-                for line in result.logs:
-                    st.text(line)
