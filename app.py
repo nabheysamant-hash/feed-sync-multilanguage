@@ -686,115 +686,110 @@ elif current == "adv_main":
     st.title("Advertiser & Wallet Management")
     st.caption("Create advertisers, look up IDs, manage wallets, and create transactions.")
 
-    tab_single, tab_wallet = st.tabs(["Single Advertiser", "Wallet"])
+    tab_onboard, tab_lookup, tab_wallet = st.tabs(["Advertiser Onboarding", "Find Advertiser ID", "Wallet"])
 
-    # ── Tab 1: Single Advertiser ─────────────────────────────────────────
-    with tab_single:
-        adv_action = st.radio("Action", ["Lookup by Merchant ID", "Create Advertiser"],
-                              horizontal=True, label_visibility="collapsed", key="adv_action")
-        st.divider()
+    # ── Tab 1: Advertiser Onboarding ─────────────────────────────────────
+    with tab_onboard:
+        st.markdown("#### Create a New Advertiser")
+        st.caption("Onboard a new brand or seller onto the Osmos platform.")
 
-        # ── Lookup ───────────────────────────────────────────────────────
-        if adv_action == "Lookup by Merchant ID":
-            st.markdown("#### Lookup Advertiser — get your Advertiser ID")
-            st.caption("Use this to find the `advertiser_id` needed for all Wallet operations.")
+        col1, col2 = st.columns(2)
+        with col1:
+            s_name = st.text_input("Name *", placeholder="Acme Corp")
+            s_merchant_id = st.text_input("Merchant ID *", placeholder="acme_001")
+        with col2:
+            s_alias = st.text_input("Alias", placeholder="acme (optional)")
+            s_merchant_type = st.selectbox("Merchant Type", options=VALID_MERCHANT_TYPES,
+                                           format_func=lambda x: x if x else "— not set —")
 
-            lu_merchant_id = st.text_input("Merchant ID *", key="lu_mid", placeholder="acme_001",
-                                           help="The unique ID given by the retailer to the merchant/brand/seller")
+        if s_name and s_merchant_id:
+            payload_preview = build_adv_payload(
+                name=s_name, merchant_id=s_merchant_id,
+                alias=s_alias or None, merchant_type=s_merchant_type or None,
+            )
+            with st.expander("Payload preview", expanded=False):
+                st.json(payload_preview)
 
-            lookup_btn = st.button("Lookup Advertiser", type="primary", key="lookup_btn",
-                                   disabled=not (has_creds and lu_merchant_id))
-            if not has_creds:
-                st.caption("Enter API credentials in the sidebar.")
+        col_dry, col_create = st.columns(2)
+        with col_dry:
+            single_dry = st.button("Dry Run", key="single_dry", use_container_width=True)
+        with col_create:
+            single_create = st.button("Create Advertiser", type="primary", key="single_create",
+                                      use_container_width=True,
+                                      disabled=not (has_creds and s_name and s_merchant_id))
 
-            if lookup_btn:
-                logs = []
-                session = requests.Session()
-                with st.spinner("Looking up advertiser..."):
-                    ok, data = _api_request(session, "GET", API_ADVERTISER_GET, make_headers(), logs,
-                                            f"lookup {lu_merchant_id}",
-                                            params={"merchant_id": lu_merchant_id})
-                if ok and data:
-                    adv_id = (data.get("advertiser_id") or data.get("id") or
-                              (data.get("data") or {}).get("advertiser_id") or "")
-                    adv_name = data.get("name") or data.get("advertiser_name") or ""
-                    adv_status = data.get("status") or ""
+        if not has_creds:
+            st.caption("Enter API credentials in the sidebar to enable creation.")
 
-                    st.success("Advertiser found.")
-                    c1, c2, c3 = st.columns(3)
-                    if adv_id:
-                        c1.metric("Advertiser ID", adv_id)
-                    if adv_name:
-                        c2.metric("Name", adv_name)
-                    if adv_status:
-                        c3.metric("Status", adv_status)
-                    st.json(data)
-
-                    if adv_id:
-                        st.session_state["lw_last_advertiser_id"] = adv_id
-                        st.info(f"Advertiser ID `{adv_id}` saved — switch to the **Wallet** tab to list wallets.")
-                else:
-                    st.error("Advertiser not found. See logs below.")
-                with st.expander("Logs"):
-                    for line in logs:
-                        st.text(line)
-
-        # ── Create ───────────────────────────────────────────────────────
-        else:
-            st.markdown("#### Create a Single Advertiser")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                s_name = st.text_input("Name *", placeholder="Acme Corp")
-                s_merchant_id = st.text_input("Merchant ID *", placeholder="acme_001")
-            with col2:
-                s_alias = st.text_input("Alias", placeholder="acme (optional)")
-                s_merchant_type = st.selectbox("Merchant Type", options=VALID_MERCHANT_TYPES,
-                                               format_func=lambda x: x if x else "— not set —")
-
-            if s_name and s_merchant_id:
-                payload_preview = build_adv_payload(
-                    name=s_name, merchant_id=s_merchant_id,
-                    alias=s_alias or None, merchant_type=s_merchant_type or None,
-                )
-                with st.expander("Payload preview", expanded=False):
-                    st.json(payload_preview)
-
-            col_dry, col_create = st.columns(2)
-            with col_dry:
-                single_dry = st.button("Dry Run", key="single_dry", use_container_width=True)
-            with col_create:
-                single_create = st.button("Create Advertiser", type="primary", key="single_create",
-                                          use_container_width=True,
-                                          disabled=not (has_creds and s_name and s_merchant_id))
-
-            if not has_creds:
-                st.caption("Enter API credentials in the sidebar to enable creation.")
-
-            if single_dry:
-                if not s_name or not s_merchant_id:
-                    st.error("Name and Merchant ID are required.")
-                else:
-                    payload = build_adv_payload(s_name, s_merchant_id, s_alias or None, s_merchant_type or None)
-                    st.success("Dry run — payload is valid.")
-                    st.json(payload)
-
-            if single_create:
+        if single_dry:
+            if not s_name or not s_merchant_id:
+                st.error("Name and Merchant ID are required.")
+            else:
                 payload = build_adv_payload(s_name, s_merchant_id, s_alias or None, s_merchant_type or None)
-                logs = []
-                session = requests.Session()
-                with st.spinner("Creating advertiser..."):
-                    ok = _adv_post(session, payload, make_headers(), logs, s_name)
-                if ok:
-                    st.success(f"Advertiser **{s_name}** created successfully.")
-                    play_success()
-                else:
-                    st.error(f"Failed to create **{s_name}**. See logs below.")
-                with st.expander("Logs"):
-                    for line in logs:
-                        st.text(line)
+                st.success("Dry run — payload is valid.")
+                st.json(payload)
 
-    # ── Tab 2: Wallet ────────────────────────────────────────────────────
+        if single_create:
+            payload = build_adv_payload(s_name, s_merchant_id, s_alias or None, s_merchant_type or None)
+            logs = []
+            session = requests.Session()
+            with st.spinner("Creating advertiser..."):
+                ok = _adv_post(session, payload, make_headers(), logs, s_name)
+            if ok:
+                st.success(f"Advertiser **{s_name}** created successfully.")
+                play_success()
+            else:
+                st.error(f"Failed to create **{s_name}**. See logs below.")
+            with st.expander("Logs"):
+                for line in logs:
+                    st.text(line)
+
+    # ── Tab 2: Find Advertiser ID ────────────────────────────────────────
+    with tab_lookup:
+        st.markdown("#### Find Advertiser ID from Merchant ID")
+        st.caption("Use this to get the `advertiser_id` needed for all Wallet operations.")
+
+        lu_merchant_id = st.text_input("Merchant ID *", key="lu_mid", placeholder="acme_001",
+                                       help="The unique ID given by the retailer to the merchant/brand/seller")
+
+        lookup_btn = st.button("Lookup Advertiser", type="primary", key="lookup_btn",
+                               disabled=not (has_creds and lu_merchant_id))
+        if not has_creds:
+            st.caption("Enter API credentials in the sidebar.")
+
+        if lookup_btn:
+            logs = []
+            session = requests.Session()
+            with st.spinner("Looking up advertiser..."):
+                ok, data = _api_request(session, "GET", API_ADVERTISER_GET, make_headers(), logs,
+                                        f"lookup {lu_merchant_id}",
+                                        params={"merchant_id": lu_merchant_id})
+            if ok and data:
+                adv_id = (data.get("advertiser_id") or data.get("id") or
+                          (data.get("data") or {}).get("advertiser_id") or "")
+                adv_name = data.get("name") or data.get("advertiser_name") or ""
+                adv_status = data.get("status") or ""
+
+                st.success("Advertiser found.")
+                c1, c2, c3 = st.columns(3)
+                if adv_id:
+                    c1.metric("Advertiser ID", adv_id)
+                if adv_name:
+                    c2.metric("Name", adv_name)
+                if adv_status:
+                    c3.metric("Status", adv_status)
+                st.json(data)
+
+                if adv_id:
+                    st.session_state["lw_last_advertiser_id"] = adv_id
+                    st.info(f"Advertiser ID `{adv_id}` saved — switch to the **Wallet** tab to list wallets.")
+            else:
+                st.error("Advertiser not found. See logs below.")
+            with st.expander("Logs"):
+                for line in logs:
+                    st.text(line)
+
+    # ── Tab 3: Wallet ────────────────────────────────────────────────────
     with tab_wallet:
         st.subheader("Wallet Management")
 
