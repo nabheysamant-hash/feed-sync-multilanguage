@@ -790,7 +790,6 @@ elif current == "adv_main":
                 ok = _adv_post(session, payload, make_headers(), logs, s_name)
             if ok:
                 st.success(f"Advertiser **{s_name}** created successfully.")
-                play_success()
                 st.markdown("---")
                 st.markdown(
                     f"**✅ Stage 2 complete!** Advertiser **{s_name}** is live.\n\n"
@@ -1033,7 +1032,6 @@ elif current == "adv_main":
                                             success_codes=(200, 201))
                 if ok:
                     st.success(f"Transaction **{ct_partner_tx_id}** created successfully.")
-                    play_success()
                     if data:
                         tx_id = data.get("transaction_id") or data.get("id") or ""
                         if tx_id:
