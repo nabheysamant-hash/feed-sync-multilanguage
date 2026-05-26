@@ -325,6 +325,17 @@ with st.sidebar:
     st.header("🔄 Osmos Operations Hub")
     st.divider()
 
+    # --- API Credentials (FIRST — everything else depends on this) ---
+    st.subheader("🔑 API Credentials")
+    retailer_id = st.text_input("Retailer ID (x-retailer-id)", type="default",
+                                help="Agency ID from Osmos developer settings")
+    token = st.text_input("API Token (x-token)", type="password",
+                          help="Token from Osmos developer settings")
+    if not (retailer_id and token):
+        st.warning("Enter credentials to get started.")
+
+    st.divider()
+
     # --- Tool selector ---
     st.subheader("Tools")
     current = st.session_state["page"]
@@ -365,15 +376,6 @@ with st.sidebar:
     st.caption("**① Feed Sync** — push product catalog")
     st.caption("**② Onboard Advertiser** — create brand/seller")
     st.caption("**③ Wallet** — fund & transact")
-
-    st.divider()
-
-    # --- API Credentials ---
-    st.subheader("API Credentials")
-    retailer_id = st.text_input("Retailer ID (x-retailer-id)", type="default",
-                                help="Agency ID from Osmos developer settings")
-    token = st.text_input("API Token (x-token)", type="password",
-                          help="Token from Osmos developer settings")
     st.divider()
     st.caption(f"Batch: {BATCH_SIZE} | Rate: {RATE_LIMIT} req/s | Retries: {RETRY_ATTEMPTS}")
 
