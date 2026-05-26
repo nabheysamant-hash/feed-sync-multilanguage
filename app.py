@@ -51,6 +51,42 @@ def play_success():
     st_html(_play_audio_js(_load_success_sound_b64()), height=0)
 
 
+_MISSION_COMPLETE_JS = """
+<script>
+(function(){
+  const AC = new (window.AudioContext || window.webkitAudioContext)();
+  const notes = [
+    [523.25,0.12],[659.25,0.12],[783.99,0.12],
+    [1046.50,0.20],[783.99,0.10],[1046.50,0.30]
+  ];
+  let t = AC.currentTime + 0.05;
+  notes.forEach(([freq, dur]) => {
+    const o = AC.createOscillator();
+    const g = AC.createGain();
+    o.type = 'square';
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0.15, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(g); g.connect(AC.destination);
+    o.start(t); o.stop(t + dur);
+    t += dur;
+  });
+  setTimeout(() => {
+    const u = new SpeechSynthesisUtterance("Mission Complete!");
+    u.rate = 1.0;
+    u.pitch = 1.3;
+    u.volume = 1.0;
+    window.speechSynthesis.speak(u);
+  }, 900);
+})();
+</script>
+"""
+
+
+def play_mission_complete():
+    st_html(_MISSION_COMPLETE_JS, height=0)
+
+
 # ---------------------------------------------------------------------------
 # Constants — Feed Sync
 # ---------------------------------------------------------------------------
@@ -790,6 +826,7 @@ elif current == "adv_main":
                 ok = _adv_post(session, payload, make_headers(), logs, s_name)
             if ok:
                 st.success(f"Advertiser **{s_name}** created successfully.")
+                play_mission_complete()
                 st.markdown("---")
                 st.markdown(
                     f"**✅ Stage 2 complete!** Advertiser **{s_name}** is live.\n\n"
