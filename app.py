@@ -620,6 +620,13 @@ elif current == "multi_step1":
 # MULTI-LANGUAGE — Step 2: ML Sync
 # =====================================================================
 elif current == "multi_step2":
+    if not st.session_state.get("v2_sync_done"):
+        st.warning("Complete **Step 1 — Feed Sync V2** first before proceeding to multi-language sync.")
+        if st.button("← Go to Step 1", type="primary"):
+            go_to("multi_step1")
+            st.rerun()
+        st.stop()
+
     st.caption("Step 2 of 3")
     st.progress(2 / 3)
     st.title("Step 2 — Multi-Language Sync")
@@ -712,6 +719,13 @@ elif current == "multi_step2":
 # MULTI-LANGUAGE — Step 3: cURL Generator
 # =====================================================================
 elif current == "multi_step3":
+    if not st.session_state.get("ml_sync_done"):
+        st.warning("Complete **Step 2 — Multi-Language Sync** first before accessing the cURL generator.")
+        if st.button("← Go to Step 2", type="primary"):
+            go_to("multi_step2")
+            st.rerun()
+        st.stop()
+
     st.caption("Step 3 of 3")
     st.progress(3 / 3)
     st.title("Step 3 — cURL Generator")
