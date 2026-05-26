@@ -360,6 +360,14 @@ with st.sidebar:
 
     st.divider()
 
+    # --- Workflow Guide ---
+    st.subheader("Workflow")
+    st.caption("**① Feed Sync** — push product catalog")
+    st.caption("**② Onboard Advertiser** — create brand/seller")
+    st.caption("**③ Wallet** — fund & transact")
+
+    st.divider()
+
     # --- API Credentials ---
     st.subheader("API Credentials")
     retailer_id = st.text_input("Retailer ID (x-retailer-id)", type="default",
@@ -387,6 +395,24 @@ def make_headers():
 # =====================================================================
 if current == "feed_home":
     st.title("Feed Sync")
+
+    # --- Workflow overview ---
+    with st.expander("📋 How this tool works — read me first", expanded=False):
+        st.markdown(
+            """
+            This hub walks you through the full Osmos setup in **3 stages**:
+
+            | Stage | What you do | When |
+            |-------|------------|------|
+            | **① Feed Sync** | Upload your product catalog CSV and push it to Osmos | **You are here** |
+            | **② Advertiser Onboarding** | Create the brand/seller entity on Osmos | After feed is synced |
+            | **③ Wallet & Transactions** | Fund the advertiser wallet and create transactions | After advertiser is live |
+
+            **Start below** by choosing Single or Multi-Language sync. Once your feed is live,
+            switch to **Advertiser & Wallet** in the sidebar to continue.
+            """
+        )
+
     st.markdown("####")
     st.subheader("What kind of feed sync do you want?")
     st.markdown("")
@@ -476,6 +502,11 @@ elif current == "single":
             if result.failed == 0:
                 st.success(f"**{result.synced:,}/{result.total:,}** products synced ✅")
                 play_success()
+                st.markdown("---")
+                st.markdown("**✅ Stage 1 complete!** Your product feed is live.")
+                if st.button("Next → Onboard Advertisers", key="s_next_adv", type="primary"):
+                    go_to("adv_main")
+                    st.rerun()
             else:
                 st.error(f"{result.synced:,} synced, {result.failed:,} failed ❌")
             with st.expander("Sync logs"):
@@ -613,6 +644,11 @@ elif current == "multi_step2":
                 st.success(f"**{result.synced:,}/{result.total:,}** products synced ✅  (language=`{ml_lang}`)")
                 st.session_state["ml_sync_done"] = True
                 play_success()
+                st.markdown("---")
+                st.markdown("**✅ Stage 1 complete!** Both V2 and multi-language feeds are live.")
+                if st.button("Next → Onboard Advertisers", key="m2_next_adv", type="primary"):
+                    go_to("adv_main")
+                    st.rerun()
             else:
                 st.error(f"{result.synced:,} synced, {result.failed:,} failed ❌")
             with st.expander("Sync logs"):
@@ -684,7 +720,22 @@ elif current == "multi_step3":
 
 elif current == "adv_main":
     st.title("Advertiser & Wallet Management")
-    st.caption("Create advertisers, look up IDs, manage wallets, and create transactions.")
+
+    with st.expander("📋 Where you are in the workflow", expanded=False):
+        st.markdown(
+            """
+            | Stage | Status |
+            |-------|--------|
+            | ① Feed Sync | ✅ Done (or do it first via **Feed Sync** in the sidebar) |
+            | **② Advertiser Onboarding** | **You are here** — create the brand/seller entity |
+            | ③ Wallet & Transactions | Next — fund the wallet after the advertiser is live |
+
+            **Flow inside this page:**
+            1. **Advertiser Onboarding** — create a new advertiser with name + merchant ID
+            2. **Find Advertiser ID** — look up the `advertiser_id` from the merchant ID you just created
+            3. **Wallet** — use the advertiser ID to list wallets, check balance, or create a transaction
+            """
+        )
 
     tab_onboard, tab_lookup, tab_wallet = st.tabs(["Advertiser Onboarding", "Find Advertiser ID", "Wallet"])
 
@@ -738,6 +789,12 @@ elif current == "adv_main":
             if ok:
                 st.success(f"Advertiser **{s_name}** created successfully.")
                 play_success()
+                st.markdown("---")
+                st.markdown(
+                    f"**✅ Stage 2 complete!** Advertiser **{s_name}** is live.\n\n"
+                    "**Next:** Switch to the **Find Advertiser ID** tab to get the `advertiser_id`, "
+                    "then head to **Wallet** to fund and transact."
+                )
             else:
                 st.error(f"Failed to create **{s_name}**. See logs below.")
             with st.expander("Logs"):
@@ -782,7 +839,12 @@ elif current == "adv_main":
 
                 if adv_id:
                     st.session_state["lw_last_advertiser_id"] = adv_id
-                    st.info(f"Advertiser ID `{adv_id}` saved — switch to the **Wallet** tab to list wallets.")
+                    st.markdown("---")
+                    st.markdown(
+                        f"**Advertiser ID `{adv_id}` saved.**\n\n"
+                        "**Next → Stage 3:** Switch to the **Wallet** tab to list wallets, "
+                        "check balance, or create a transaction. The Advertiser ID will be pre-filled for you."
+                    )
             else:
                 st.error("Advertiser not found. See logs below.")
             with st.expander("Logs"):
@@ -975,6 +1037,11 @@ elif current == "adv_main":
                         if tx_id:
                             st.metric("Transaction ID", tx_id)
                         st.json(data)
+                    st.markdown("---")
+                    st.markdown(
+                        "**🎉 All 3 stages complete!** Feed synced → Advertiser onboarded → Wallet funded.\n\n"
+                        "You're all set. Create more transactions or switch back to **Feed Sync** for another catalog."
+                    )
                 else:
                     st.error("Failed to create transaction. See logs below.")
                 with st.expander("Logs"):
