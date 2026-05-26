@@ -686,7 +686,7 @@ elif current == "adv_main":
     st.title("Advertiser & Wallet Management")
     st.caption("Create advertisers, look up IDs, manage wallets, and create transactions.")
 
-    tab_single, tab_bulk, tab_wallet = st.tabs(["Single Advertiser", "Bulk via CSV", "Wallet"])
+    tab_single, tab_wallet = st.tabs(["Single Advertiser", "Wallet"])
 
     # ── Tab 1: Single Advertiser ─────────────────────────────────────────
     with tab_single:
@@ -794,102 +794,7 @@ elif current == "adv_main":
                     for line in logs:
                         st.text(line)
 
-    # ── Tab 2: Bulk CSV ──────────────────────────────────────────────────
-    with tab_bulk:
-        st.subheader("Bulk Create from CSV")
-        st.info(
-            "Upload a CSV with columns: `name`, `merchant_id`, `alias` (optional), `merchant_type` (optional — BRAND or SELLER)"
-        )
-
-        with st.expander("Sample CSV format"):
-            st.code(
-                "name,merchant_id,alias,merchant_type\n"
-                "\"Acme Corp\",\"acme_001\",\"acme\",\"BRAND\"\n"
-                "\"Seller X\",\"seller_002\",,SELLER\n"
-                "\"Generic Co\",\"gen_003\",,",
-                language="text"
-            )
-
-        uploaded = st.file_uploader("Upload CSV / TSV", type=["csv", "tsv"], key="adv_bulk")
-
-        if uploaded:
-            raw_text = uploaded.getvalue().decode("utf-8-sig")
-            delimiter = "\t" if uploaded.name.endswith(".tsv") else ","
-            reader = csv.DictReader(io.StringIO(raw_text), delimiter=delimiter)
-            rows = list(reader)
-            valid, skipped = validate_adv_rows(rows)
-
-            col_a, col_b, col_c = st.columns(3)
-            col_a.metric("Total rows", len(rows))
-            col_b.metric("Valid", len(valid))
-            col_c.metric("Skipped", len(skipped))
-
-            if skipped:
-                with st.expander(f"Skipped rows ({len(skipped)})"):
-                    for s in skipped:
-                        st.warning(f"Row {s['row']}: {s['reason']} — {s['data']}")
-
-            if valid:
-                with st.expander("Preview first payload"):
-                    st.json(valid[0])
-
-                col_dry2, col_go = st.columns(2)
-                with col_dry2:
-                    bulk_dry = st.button("Dry Run", key="bulk_dry", use_container_width=True)
-                with col_go:
-                    bulk_create = st.button("Create All", type="primary", key="bulk_create",
-                                            use_container_width=True, disabled=not has_creds)
-
-                if not has_creds:
-                    st.caption("Enter API credentials in the sidebar to enable creation.")
-
-                if bulk_dry:
-                    st.success(f"Dry run — {len(valid)} valid advertiser(s) ready to create.")
-                    for p in valid:
-                        st.json(p)
-
-                if bulk_create:
-                    st.subheader("Creating Advertisers...")
-                    session = requests.Session()
-                    headers = make_headers()
-                    logs = []
-                    created, failed = 0, 0
-                    min_interval = 1.0 / RATE_LIMIT
-                    last_sent = 0.0
-
-                    progress = st.progress(0)
-                    status_el = st.empty()
-
-                    for i, payload in enumerate(valid):
-                        wait = min_interval - (time.monotonic() - last_sent)
-                        if wait > 0:
-                            time.sleep(wait)
-                        ok = _adv_post(session, payload, headers, logs, payload["name"])
-                        last_sent = time.monotonic()
-                        if ok:
-                            created += 1
-                        else:
-                            failed += 1
-                        progress.progress((i + 1) / len(valid), text=f"{i+1}/{len(valid)}")
-                        status_el.text(f"Created: {created}  Failed: {failed}")
-
-                    st.divider()
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Created", created)
-                    c2.metric("Failed", failed)
-                    c3.metric("Total", len(valid))
-
-                    if failed == 0:
-                        st.success("All advertisers created successfully.")
-                        play_success()
-                    else:
-                        st.error(f"{failed} advertiser(s) failed. See logs below.")
-
-                    with st.expander("Logs"):
-                        for line in logs:
-                            st.text(line)
-
-    # ── Tab 3: Wallet ────────────────────────────────────────────────────
+    # ── Tab 2: Wallet ────────────────────────────────────────────────────
     with tab_wallet:
         st.subheader("Wallet Management")
 
