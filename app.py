@@ -1,11 +1,8 @@
 """
-Osmos Feed Sync — Streamlit Wizard UI
+Osmos Operations Hub — Streamlit UI
 
-Screen 1 — Choose sync type: Single Language or Multi-Language
-  Single Language → V2 sync only (all fields, one step)
-  Multi-Language  → Step 1: V2 sync (full feed)
-                    Step 2: ML sync (translated feed + language code)
-                    Step 3: cURL generator
+Left sidebar: tool selector + API credentials
+Main area:    Feed Sync  |  Advertiser & Wallet management
 
 Run:  streamlit run app.py
 """
@@ -30,9 +27,9 @@ from streamlit.components.v1 import html as st_html
 
 _SOUND_DIR = os.path.dirname(os.path.abspath(__file__))
 
+
 @st.cache_data
 def _load_success_sound_b64() -> str:
-    """Load success_sound.mp3 and return base64-encoded string."""
     path = os.path.join(_SOUND_DIR, "success_sound.mp3")
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode()
@@ -50,18 +47,12 @@ def _play_audio_js(b64: str) -> str:
 """
 
 
-def play_powerup():
-    """Play custom success sound for intermediate sync steps."""
-    st_html(_play_audio_js(_load_success_sound_b64()), height=0)
-
-
-def play_stage_clear():
-    """Play custom success sound for final multi-language sync."""
+def play_success():
     st_html(_play_audio_js(_load_success_sound_b64()), height=0)
 
 
 # ---------------------------------------------------------------------------
-# Constants
+# Constants — Feed Sync
 # ---------------------------------------------------------------------------
 
 API_FEED_V2 = "https://apiv2.onlinesales.ai/catalogSyncService/products"
@@ -75,9 +66,7 @@ RETRY_DELAY = 2
 ML_FIELDS = {"id", "title", "description", "brand", "category",
              "custom_label_0", "custom_label_1", "custom_label_2",
              "secondary_categories"}
-
 REQUIRED_FIELDS = {"id", "title", "description", "brand"}
-
 DEFAULT_REMAP = {"image_url": "image_link"}
 
 LANGUAGE_OPTIONS = {
@@ -97,6 +86,17 @@ LANGUAGE_OPTIONS = {
 
 _STRIP_CHARS = str.maketrans("", "", "\r\n\0\t")
 
+# ---------------------------------------------------------------------------
+# Constants — Advertiser & Wallet
+# ---------------------------------------------------------------------------
+
+API_ADVERTISER_CREATE = "https://apiv2.onlinesales.ai/marketing/v1/advertiser/create"
+API_ADVERTISER_GET = "https://apiv2.onlinesales.ai/marketing/v1/advertiser/"
+API_WALLET_BASE = "https://apiv2.onlinesales.ai/billing/v1/advertiser/{advertiser_id}/wallet"
+API_WALLET_BY_ID = "https://apiv2.onlinesales.ai/billing/v1/advertiser/{advertiser_id}/wallet/{wallet_id}"
+API_TRANSACTION_CREATE = "https://apiv2.onlinesales.ai/billing/v1/advertiser/{advertiser_id}/transactions"
+VALID_MERCHANT_TYPES = ["", "BRAND", "SELLER"]
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -113,7 +113,7 @@ class SyncResult:
 
 
 # ---------------------------------------------------------------------------
-# Core helpers
+# Feed Sync helpers
 # ---------------------------------------------------------------------------
 
 def parse_csv(uploaded_file) -> tuple[list[str], list[dict]]:
@@ -163,7 +163,7 @@ def ml_only(product: dict) -> dict:
     return out
 
 
-def _post(session, endpoint, payload, headers, result, label, retry_attempts=RETRY_ATTEMPTS):
+def _feed_post(session, endpoint, payload, headers, result, label, retry_attempts=RETRY_ATTEMPTS):
     for attempt in range(1, retry_attempts + 1):
         try:
             resp = session.post(endpoint, json=payload, headers=headers, timeout=30)
@@ -199,10 +199,6 @@ def _make_curl(endpoint, retailer_id, token, payload_dict):
     )
 
 
-# ---------------------------------------------------------------------------
-# Sync runners
-# ---------------------------------------------------------------------------
-
 def run_v2_sync(retailer_id, token, products, progress_bar, status_text):
     result = SyncResult(label="Feed V2", total=len(products))
     headers = {"x-retailer-id": retailer_id, "x-token": token, "Content-Type": "application/json"}
@@ -212,7 +208,7 @@ def run_v2_sync(retailer_id, token, products, progress_bar, status_text):
     for idx, batch in enumerate(batches):
         if idx > 0:
             time.sleep(min_interval)
-        ok = _post(session, API_FEED_V2, {"products": batch}, headers, result, f"Batch {idx+1}")
+        ok = _feed_post(session, API_FEED_V2, {"products": batch}, headers, result, f"Batch {idx+1}")
         if ok:
             result.synced += len(batch)
         else:
@@ -235,7 +231,7 @@ def run_ml_sync(retailer_id, token, language, products, progress_bar, status_tex
         payload = {"language": language, "products": ml_batch}
         result.logs.append(f"[Batch {idx+1}] Sending {len(ml_batch)} products, "
                            f"fields={sorted(ml_batch[0].keys()) if ml_batch else '?'}")
-        ok = _post(session, API_MULTI_LANG, payload, headers, result, f"Batch {idx+1}")
+        ok = _feed_post(session, API_MULTI_LANG, payload, headers, result, f"Batch {idx+1}")
         if ok:
             result.synced += len(batch)
         else:
@@ -246,24 +242,126 @@ def run_ml_sync(retailer_id, token, language, products, progress_bar, status_tex
 
 
 # ---------------------------------------------------------------------------
-# Navigation helpers
+# Advertiser & Wallet helpers
+# ---------------------------------------------------------------------------
+
+def _api_request(session, method, url, headers, logs, label, payload=None, params=None,
+                 success_codes=(200, 201)):
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            resp = session.request(method, url, json=payload, params=params,
+                                   headers=headers, timeout=30)
+            if resp.status_code in success_codes:
+                data = resp.json()
+                logs.append(f"[{label}] OK  response={json.dumps(data)[:300]}")
+                return True, data
+            try:
+                error = resp.json().get("error", {})
+                logs.append(f"[{label}] FAIL attempt={attempt}/{RETRY_ATTEMPTS} "
+                            f"http={resp.status_code} code={error.get('code')} "
+                            f"msg={error.get('message')}")
+            except Exception:
+                logs.append(f"[{label}] FAIL attempt={attempt}/{RETRY_ATTEMPTS} "
+                            f"http={resp.status_code} body={resp.text[:300]}")
+        except requests.RequestException as exc:
+            logs.append(f"[{label}] ERROR attempt={attempt}/{RETRY_ATTEMPTS} {exc}")
+        if attempt < RETRY_ATTEMPTS:
+            time.sleep(RETRY_DELAY)
+    return False, None
+
+
+def _adv_post(session, payload, headers, logs, label):
+    ok, _ = _api_request(session, "POST", API_ADVERTISER_CREATE, headers, logs, label, payload=payload)
+    return ok
+
+
+def build_adv_payload(name, merchant_id, alias=None, merchant_type=None):
+    payload = {"name": name, "merchant_id": merchant_id}
+    if alias:
+        payload["alias"] = alias
+    if merchant_type:
+        payload["merchant_type"] = merchant_type
+    return payload
+
+
+def validate_adv_rows(rows):
+    valid, skipped = [], []
+    for i, row in enumerate(rows, start=2):
+        name = (row.get("name") or "").strip()
+        merchant_id = (row.get("merchant_id") or "").strip()
+        if not name or not merchant_id:
+            skipped.append({"row": i, "reason": f"missing {'name' if not name else 'merchant_id'}", "data": row})
+            continue
+        merchant_type = (row.get("merchant_type") or "").strip().upper() or None
+        if merchant_type and merchant_type not in ("BRAND", "SELLER"):
+            merchant_type = None
+        valid.append(build_adv_payload(
+            name=name, merchant_id=merchant_id,
+            alias=(row.get("alias") or "").strip() or None,
+            merchant_type=merchant_type,
+        ))
+    return valid, skipped
+
+
+# ---------------------------------------------------------------------------
+# Navigation
 # ---------------------------------------------------------------------------
 
 def go_to(page_name):
     st.session_state["page"] = page_name
 
+
 if "page" not in st.session_state:
-    st.session_state["page"] = "home"
+    st.session_state["page"] = "feed_home"
 
 
-# ---------------------------------------------------------------------------
-# Page config + sidebar
-# ---------------------------------------------------------------------------
+# =====================================================================
+# PAGE CONFIG + LEFT SIDEBAR
+# =====================================================================
 
-st.set_page_config(page_title="Osmos Feed Sync", page_icon="🔄", layout="wide")
+st.set_page_config(page_title="Osmos Operations Hub", page_icon="🔄", layout="wide")
 
 with st.sidebar:
-    st.header("API Credentials")
+    st.header("🔄 Osmos Operations Hub")
+    st.divider()
+
+    # --- Tool selector ---
+    st.subheader("Tools")
+    current = st.session_state["page"]
+
+    is_feed = current.startswith("feed_") or current in ("single", "multi_step1", "multi_step2", "multi_step3")
+    is_adv = current.startswith("adv_")
+
+    if st.button("📦  Feed Sync", key="nav_feed", use_container_width=True,
+                 type="primary" if is_feed else "secondary"):
+        go_to("feed_home")
+        st.rerun()
+
+    if st.button("🏢  Advertiser & Wallet", key="nav_adv", use_container_width=True,
+                 type="primary" if is_adv else "secondary"):
+        go_to("adv_main")
+        st.rerun()
+
+    # --- Feed sub-nav ---
+    if is_feed and current != "feed_home":
+        st.divider()
+        st.caption("Feed Sync")
+        is_single = current == "single"
+        is_multi = current in ("multi_step1", "multi_step2", "multi_step3")
+
+        if st.button("Single Language", key="nav_single", use_container_width=True,
+                     type="primary" if is_single else "secondary"):
+            go_to("single")
+            st.rerun()
+        if st.button("Multi-Language", key="nav_multi", use_container_width=True,
+                     type="primary" if is_multi else "secondary"):
+            go_to("multi_step1")
+            st.rerun()
+
+    st.divider()
+
+    # --- API Credentials ---
+    st.subheader("API Credentials")
     retailer_id = st.text_input("Retailer ID (x-retailer-id)", type="default",
                                 help="Agency ID from Osmos developer settings")
     token = st.text_input("API Token (x-token)", type="password",
@@ -271,22 +369,24 @@ with st.sidebar:
     st.divider()
     st.caption(f"Batch: {BATCH_SIZE} | Rate: {RATE_LIMIT} req/s | Retries: {RETRY_ATTEMPTS}")
 
-    # Quick nav back to home
-    st.divider()
-    if st.button("← Start Over", use_container_width=True):
-        go_to("home")
-        st.rerun()
-
 has_creds = bool(retailer_id and token)
 remap = DEFAULT_REMAP
 current = st.session_state["page"]
 
 
+def make_headers():
+    return {"x-retailer-id": retailer_id, "x-token": token, "Content-Type": "application/json"}
+
+
+# #####################################################################
+#                        FEED SYNC PAGES
+# #####################################################################
+
 # =====================================================================
-# HOME — Choose sync type
+# FEED HOME — Choose sync type
 # =====================================================================
-if current == "home":
-    st.title("Osmos Feed Sync")
+if current == "feed_home":
+    st.title("Feed Sync")
     st.markdown("####")
     st.subheader("What kind of feed sync do you want?")
     st.markdown("")
@@ -375,7 +475,7 @@ elif current == "single":
             result = run_v2_sync(retailer_id, token, products, progress, status)
             if result.failed == 0:
                 st.success(f"**{result.synced:,}/{result.total:,}** products synced ✅")
-                play_powerup()
+                play_success()
             else:
                 st.error(f"{result.synced:,} synced, {result.failed:,} failed ❌")
             with st.expander("Sync logs"):
@@ -387,7 +487,6 @@ elif current == "single":
 # MULTI-LANGUAGE — Step 1: Feed V2
 # =====================================================================
 elif current == "multi_step1":
-    # Step indicator
     st.caption("Step 1 of 3")
     st.progress(1 / 3)
     st.title("Step 1 — Feed Sync V2")
@@ -432,7 +531,7 @@ elif current == "multi_step1":
             if result.failed == 0:
                 st.success(f"**{result.synced:,}/{result.total:,}** products synced ✅")
                 st.session_state["v2_sync_done"] = True
-                play_powerup()
+                play_success()
             else:
                 st.error(f"{result.synced:,} synced, {result.failed:,} failed ❌")
             with st.expander("Sync logs"):
@@ -513,7 +612,7 @@ elif current == "multi_step2":
             if result.failed == 0:
                 st.success(f"**{result.synced:,}/{result.total:,}** products synced ✅  (language=`{ml_lang}`)")
                 st.session_state["ml_sync_done"] = True
-                play_stage_clear()
+                play_success()
             else:
                 st.error(f"{result.synced:,} synced, {result.failed:,} failed ❌")
             with st.expander("Sync logs"):
@@ -577,3 +676,407 @@ elif current == "multi_step3":
     if st.button("← Back to Multi-Language Sync", use_container_width=True):
         go_to("multi_step2")
         st.rerun()
+
+
+# #####################################################################
+#                   ADVERTISER & WALLET PAGE
+# #####################################################################
+
+elif current == "adv_main":
+    st.title("Advertiser & Wallet Management")
+    st.caption("Create advertisers, look up IDs, manage wallets, and create transactions.")
+
+    tab_single, tab_bulk, tab_wallet = st.tabs(["Single Advertiser", "Bulk via CSV", "Wallet"])
+
+    # ── Tab 1: Single Advertiser ─────────────────────────────────────────
+    with tab_single:
+        adv_action = st.radio("Action", ["Lookup by Merchant ID", "Create Advertiser"],
+                              horizontal=True, label_visibility="collapsed", key="adv_action")
+        st.divider()
+
+        # ── Lookup ───────────────────────────────────────────────────────
+        if adv_action == "Lookup by Merchant ID":
+            st.markdown("#### Lookup Advertiser — get your Advertiser ID")
+            st.caption("Use this to find the `advertiser_id` needed for all Wallet operations.")
+
+            lu_merchant_id = st.text_input("Merchant ID *", key="lu_mid", placeholder="acme_001",
+                                           help="The unique ID given by the retailer to the merchant/brand/seller")
+
+            lookup_btn = st.button("Lookup Advertiser", type="primary", key="lookup_btn",
+                                   disabled=not (has_creds and lu_merchant_id))
+            if not has_creds:
+                st.caption("Enter API credentials in the sidebar.")
+
+            if lookup_btn:
+                logs = []
+                session = requests.Session()
+                with st.spinner("Looking up advertiser..."):
+                    ok, data = _api_request(session, "GET", API_ADVERTISER_GET, make_headers(), logs,
+                                            f"lookup {lu_merchant_id}",
+                                            params={"merchant_id": lu_merchant_id})
+                if ok and data:
+                    adv_id = (data.get("advertiser_id") or data.get("id") or
+                              (data.get("data") or {}).get("advertiser_id") or "")
+                    adv_name = data.get("name") or data.get("advertiser_name") or ""
+                    adv_status = data.get("status") or ""
+
+                    st.success("Advertiser found.")
+                    c1, c2, c3 = st.columns(3)
+                    if adv_id:
+                        c1.metric("Advertiser ID", adv_id)
+                    if adv_name:
+                        c2.metric("Name", adv_name)
+                    if adv_status:
+                        c3.metric("Status", adv_status)
+                    st.json(data)
+
+                    if adv_id:
+                        st.session_state["lw_last_advertiser_id"] = adv_id
+                        st.info(f"Advertiser ID `{adv_id}` saved — switch to the **Wallet** tab to list wallets.")
+                else:
+                    st.error("Advertiser not found. See logs below.")
+                with st.expander("Logs"):
+                    for line in logs:
+                        st.text(line)
+
+        # ── Create ───────────────────────────────────────────────────────
+        else:
+            st.markdown("#### Create a Single Advertiser")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                s_name = st.text_input("Name *", placeholder="Acme Corp")
+                s_merchant_id = st.text_input("Merchant ID *", placeholder="acme_001")
+            with col2:
+                s_alias = st.text_input("Alias", placeholder="acme (optional)")
+                s_merchant_type = st.selectbox("Merchant Type", options=VALID_MERCHANT_TYPES,
+                                               format_func=lambda x: x if x else "— not set —")
+
+            if s_name and s_merchant_id:
+                payload_preview = build_adv_payload(
+                    name=s_name, merchant_id=s_merchant_id,
+                    alias=s_alias or None, merchant_type=s_merchant_type or None,
+                )
+                with st.expander("Payload preview", expanded=False):
+                    st.json(payload_preview)
+
+            col_dry, col_create = st.columns(2)
+            with col_dry:
+                single_dry = st.button("Dry Run", key="single_dry", use_container_width=True)
+            with col_create:
+                single_create = st.button("Create Advertiser", type="primary", key="single_create",
+                                          use_container_width=True,
+                                          disabled=not (has_creds and s_name and s_merchant_id))
+
+            if not has_creds:
+                st.caption("Enter API credentials in the sidebar to enable creation.")
+
+            if single_dry:
+                if not s_name or not s_merchant_id:
+                    st.error("Name and Merchant ID are required.")
+                else:
+                    payload = build_adv_payload(s_name, s_merchant_id, s_alias or None, s_merchant_type or None)
+                    st.success("Dry run — payload is valid.")
+                    st.json(payload)
+
+            if single_create:
+                payload = build_adv_payload(s_name, s_merchant_id, s_alias or None, s_merchant_type or None)
+                logs = []
+                session = requests.Session()
+                with st.spinner("Creating advertiser..."):
+                    ok = _adv_post(session, payload, make_headers(), logs, s_name)
+                if ok:
+                    st.success(f"Advertiser **{s_name}** created successfully.")
+                    play_success()
+                else:
+                    st.error(f"Failed to create **{s_name}**. See logs below.")
+                with st.expander("Logs"):
+                    for line in logs:
+                        st.text(line)
+
+    # ── Tab 2: Bulk CSV ──────────────────────────────────────────────────
+    with tab_bulk:
+        st.subheader("Bulk Create from CSV")
+        st.info(
+            "Upload a CSV with columns: `name`, `merchant_id`, `alias` (optional), `merchant_type` (optional — BRAND or SELLER)"
+        )
+
+        with st.expander("Sample CSV format"):
+            st.code(
+                "name,merchant_id,alias,merchant_type\n"
+                "\"Acme Corp\",\"acme_001\",\"acme\",\"BRAND\"\n"
+                "\"Seller X\",\"seller_002\",,SELLER\n"
+                "\"Generic Co\",\"gen_003\",,",
+                language="text"
+            )
+
+        uploaded = st.file_uploader("Upload CSV / TSV", type=["csv", "tsv"], key="adv_bulk")
+
+        if uploaded:
+            raw_text = uploaded.getvalue().decode("utf-8-sig")
+            delimiter = "\t" if uploaded.name.endswith(".tsv") else ","
+            reader = csv.DictReader(io.StringIO(raw_text), delimiter=delimiter)
+            rows = list(reader)
+            valid, skipped = validate_adv_rows(rows)
+
+            col_a, col_b, col_c = st.columns(3)
+            col_a.metric("Total rows", len(rows))
+            col_b.metric("Valid", len(valid))
+            col_c.metric("Skipped", len(skipped))
+
+            if skipped:
+                with st.expander(f"Skipped rows ({len(skipped)})"):
+                    for s in skipped:
+                        st.warning(f"Row {s['row']}: {s['reason']} — {s['data']}")
+
+            if valid:
+                with st.expander("Preview first payload"):
+                    st.json(valid[0])
+
+                col_dry2, col_go = st.columns(2)
+                with col_dry2:
+                    bulk_dry = st.button("Dry Run", key="bulk_dry", use_container_width=True)
+                with col_go:
+                    bulk_create = st.button("Create All", type="primary", key="bulk_create",
+                                            use_container_width=True, disabled=not has_creds)
+
+                if not has_creds:
+                    st.caption("Enter API credentials in the sidebar to enable creation.")
+
+                if bulk_dry:
+                    st.success(f"Dry run — {len(valid)} valid advertiser(s) ready to create.")
+                    for p in valid:
+                        st.json(p)
+
+                if bulk_create:
+                    st.subheader("Creating Advertisers...")
+                    session = requests.Session()
+                    headers = make_headers()
+                    logs = []
+                    created, failed = 0, 0
+                    min_interval = 1.0 / RATE_LIMIT
+                    last_sent = 0.0
+
+                    progress = st.progress(0)
+                    status_el = st.empty()
+
+                    for i, payload in enumerate(valid):
+                        wait = min_interval - (time.monotonic() - last_sent)
+                        if wait > 0:
+                            time.sleep(wait)
+                        ok = _adv_post(session, payload, headers, logs, payload["name"])
+                        last_sent = time.monotonic()
+                        if ok:
+                            created += 1
+                        else:
+                            failed += 1
+                        progress.progress((i + 1) / len(valid), text=f"{i+1}/{len(valid)}")
+                        status_el.text(f"Created: {created}  Failed: {failed}")
+
+                    st.divider()
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Created", created)
+                    c2.metric("Failed", failed)
+                    c3.metric("Total", len(valid))
+
+                    if failed == 0:
+                        st.success("All advertisers created successfully.")
+                        play_success()
+                    else:
+                        st.error(f"{failed} advertiser(s) failed. See logs below.")
+
+                    with st.expander("Logs"):
+                        for line in logs:
+                            st.text(line)
+
+    # ── Tab 3: Wallet ────────────────────────────────────────────────────
+    with tab_wallet:
+        st.subheader("Wallet Management")
+
+        w_section = st.radio("Action", ["List Wallets", "Get Balance", "Create Transaction"],
+                             horizontal=True, label_visibility="collapsed")
+        st.divider()
+
+        # ── List Wallets ─────────────────────────────────────────────────
+        if w_section == "List Wallets":
+            st.markdown("#### List Wallets — find your Wallet ID")
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                lw_advertiser_id = st.text_input("Advertiser ID *", key="lw_adv", placeholder="adv_001")
+            with col2:
+                lw_limit = st.number_input("Limit", min_value=1, max_value=100, value=10, key="lw_limit")
+            with col3:
+                lw_offset = st.number_input("Offset", min_value=0, value=0, key="lw_offset")
+            lw_overall = st.checkbox("Include overall balance", key="lw_overall")
+
+            list_btn = st.button("List Wallets", type="primary", key="list_wallets",
+                                 disabled=not (has_creds and lw_advertiser_id))
+            if not has_creds:
+                st.caption("Enter API credentials in the sidebar.")
+
+            if list_btn:
+                url = API_WALLET_BASE.format(advertiser_id=lw_advertiser_id)
+                params = {"limit": lw_limit, "offset": lw_offset}
+                if lw_overall:
+                    params["overall_required"] = "true"
+                logs = []
+                session = requests.Session()
+                with st.spinner("Fetching wallets..."):
+                    ok, data = _api_request(session, "GET", url, make_headers(), logs,
+                                            "list wallets", params=params)
+                if ok and data:
+                    wallets = data if isinstance(data, list) else data.get("wallets") or data.get("data") or [data]
+                    st.success(f"Found {len(wallets)} wallet(s).")
+                    if wallets:
+                        display_keys = ["wallet_id", "id", "wallet_name", "name", "currency",
+                                        "balance", "current_balance", "payment_type", "status"]
+                        rows_display = []
+                        for w in wallets:
+                            row = {k: w.get(k, "") for k in display_keys if k in w}
+                            rows_display.append(row)
+                        if rows_display:
+                            st.dataframe(rows_display, use_container_width=True)
+                        else:
+                            st.json(wallets)
+
+                        st.session_state["lw_last_advertiser_id"] = lw_advertiser_id
+                        first_id = (wallets[0].get("wallet_id") or wallets[0].get("id") or "") if wallets else ""
+                        st.session_state["lw_last_wallet_id"] = first_id
+                        if first_id:
+                            st.info("Tip: switch to **Get Balance** or **Create Transaction** — IDs will be pre-filled.")
+                    else:
+                        st.warning("No wallets returned.")
+                else:
+                    st.error("Failed to list wallets. See logs below.")
+                with st.expander("Logs"):
+                    for line in logs:
+                        st.text(line)
+
+        # ── Get Balance ──────────────────────────────────────────────────
+        elif w_section == "Get Balance":
+            st.markdown("#### Get Wallet Balance")
+            _prefill_adv = st.session_state.get("lw_last_advertiser_id", "")
+            _prefill_wlt = st.session_state.get("lw_last_wallet_id", "")
+            col1, col2 = st.columns(2)
+            with col1:
+                gb_advertiser_id = st.text_input("Advertiser ID *", key="gb_adv",
+                                                 placeholder="adv_001", value=_prefill_adv)
+            with col2:
+                gb_wallet_id = st.text_input("Wallet ID *", key="gb_wid",
+                                             placeholder="wlt_001", value=_prefill_wlt)
+            gb_overall = st.checkbox("Include overall balance", key="gb_overall")
+
+            get_btn = st.button("Get Balance", type="primary", key="get_balance",
+                                disabled=not (has_creds and gb_advertiser_id and gb_wallet_id))
+            if not has_creds:
+                st.caption("Enter API credentials in the sidebar.")
+
+            if get_btn:
+                url = API_WALLET_BY_ID.format(advertiser_id=gb_advertiser_id, wallet_id=gb_wallet_id)
+                params = {"overall_required": "true"} if gb_overall else {}
+                logs = []
+                session = requests.Session()
+                with st.spinner("Fetching wallet..."):
+                    ok, data = _api_request(session, "GET", url, make_headers(), logs,
+                                            f"wallet {gb_wallet_id}", params=params)
+                if ok and data:
+                    st.success("Wallet found.")
+                    balance = data.get("balance") or data.get("current_balance")
+                    currency = data.get("currency")
+                    wallet_name = data.get("wallet_name") or data.get("name")
+                    if balance is not None or currency:
+                        cols = st.columns(3)
+                        if wallet_name:
+                            cols[0].metric("Wallet Name", wallet_name)
+                        if balance is not None:
+                            cols[1].metric("Balance", f"{balance} {currency or ''}".strip())
+                        if currency:
+                            cols[2].metric("Currency", currency)
+                    st.json(data)
+                else:
+                    st.error("Failed to fetch wallet. See logs below.")
+                with st.expander("Logs"):
+                    for line in logs:
+                        st.text(line)
+
+        # ── Create Transaction ───────────────────────────────────────────
+        else:
+            st.markdown("#### Create Transaction")
+            _prefill_adv_t = st.session_state.get("lw_last_advertiser_id", "")
+            _prefill_wlt_t = st.session_state.get("lw_last_wallet_id", "")
+            if _prefill_adv_t or _prefill_wlt_t:
+                st.info(f"Pre-filled from List Wallets — Advertiser: `{_prefill_adv_t}` · Wallet: `{_prefill_wlt_t}`")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                ct_advertiser_id = st.text_input("Advertiser ID *", key="ct_adv",
+                                                 placeholder="adv_001", value=_prefill_adv_t)
+                ct_partner_tx_id = st.text_input("Partner Transaction ID *", key="ct_ptxid",
+                                                 placeholder="TXN-2024-001",
+                                                 help="Your marketplace-side transaction ID (max 128 chars).")
+                ct_amount = st.number_input("Amount *", min_value=0.01, value=100.00,
+                                            step=0.01, format="%.2f", key="ct_amount",
+                                            help="Transaction amount (must be > 0)")
+                ct_currency = st.text_input("Currency *", key="ct_currency", placeholder="USD",
+                                            max_chars=3, help="3-character retailer currency code")
+            with col2:
+                ct_wallet_id = st.text_input("Wallet ID", key="ct_wid",
+                                             placeholder="wlt_001 (optional)", value=_prefill_wlt_t)
+                ct_credit_type = st.selectbox("Credit Type", options=["PREPAID", "INCENTIVE"],
+                                              key="ct_credit_type",
+                                              help="Defaults to PREPAID if not set")
+                ct_description = st.text_area("Description", key="ct_desc", placeholder="Optional")
+
+            _tx_ready = ct_advertiser_id and ct_partner_tx_id and ct_amount and ct_currency
+            if _tx_ready:
+                tx_preview = {
+                    "partner_transaction_id": ct_partner_tx_id,
+                    "amount": ct_amount,
+                    "currency": ct_currency.upper(),
+                    "credit_type": ct_credit_type,
+                }
+                if ct_wallet_id:
+                    tx_preview["wallet_id"] = ct_wallet_id
+                if ct_description:
+                    tx_preview["description"] = ct_description
+                with st.expander("Payload preview"):
+                    st.json(tx_preview)
+
+            create_tx_btn = st.button(
+                "Create Transaction", type="primary", key="create_tx",
+                disabled=not (has_creds and bool(_tx_ready))
+            )
+            if not has_creds:
+                st.caption("Enter API credentials in the sidebar.")
+
+            if create_tx_btn:
+                url = API_TRANSACTION_CREATE.format(advertiser_id=ct_advertiser_id)
+                body = {
+                    "partner_transaction_id": ct_partner_tx_id,
+                    "amount": ct_amount,
+                    "currency": ct_currency.upper(),
+                    "credit_type": ct_credit_type,
+                }
+                if ct_wallet_id:
+                    body["wallet_id"] = ct_wallet_id
+                if ct_description:
+                    body["description"] = ct_description
+                logs = []
+                session = requests.Session()
+                with st.spinner("Creating transaction..."):
+                    ok, data = _api_request(session, "POST", url, make_headers(), logs,
+                                            f"transaction {ct_partner_tx_id}", payload=body,
+                                            success_codes=(200, 201))
+                if ok:
+                    st.success(f"Transaction **{ct_partner_tx_id}** created successfully.")
+                    play_success()
+                    if data:
+                        tx_id = data.get("transaction_id") or data.get("id") or ""
+                        if tx_id:
+                            st.metric("Transaction ID", tx_id)
+                        st.json(data)
+                else:
+                    st.error("Failed to create transaction. See logs below.")
+                with st.expander("Logs"):
+                    for line in logs:
+                        st.text(line)
