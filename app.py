@@ -257,76 +257,13 @@ if "page" not in st.session_state:
 
 
 # ---------------------------------------------------------------------------
-# Page config + sidebar (navigation lives here)
+# Page config + sidebar
 # ---------------------------------------------------------------------------
 
 st.set_page_config(page_title="Osmos Feed Sync", page_icon="🔄", layout="wide")
 
 with st.sidebar:
-    st.header("🔄 Osmos Feed Sync")
-    st.divider()
-
-    # --- Sync type selection ---
-    st.subheader("Sync Type")
-    current = st.session_state["page"]
-
-    # Highlight active sync type
-    is_single = current == "single"
-    is_multi = current in ("multi_step1", "multi_step2", "multi_step3")
-
-    if st.button("📄  Single Language",
-                 key="nav_single", use_container_width=True,
-                 type="primary" if is_single else "secondary"):
-        st.session_state["v2_sync_done"] = False
-        st.session_state["ml_sync_done"] = False
-        go_to("single")
-        st.rerun()
-
-    if st.button("🌐  Multi-Language",
-                 key="nav_multi", use_container_width=True,
-                 type="primary" if is_multi else "secondary"):
-        st.session_state["v2_sync_done"] = False
-        st.session_state["ml_sync_done"] = False
-        go_to("multi_step1")
-        st.rerun()
-
-    # --- Multi-Language step tracker ---
-    if is_multi:
-        st.divider()
-        st.subheader("Steps")
-        step_num = {"multi_step1": 1, "multi_step2": 2, "multi_step3": 3}.get(current, 1)
-        v2_done = st.session_state.get("v2_sync_done", False)
-        ml_done = st.session_state.get("ml_sync_done", False)
-
-        # Step 1
-        s1_label = "✅ Feed V2 Sync" if v2_done else "① Feed V2 Sync"
-        if st.button(s1_label, key="nav_step1", use_container_width=True,
-                     type="primary" if step_num == 1 else "secondary"):
-            go_to("multi_step1")
-            st.rerun()
-
-        # Step 2
-        s2_label = "✅ Multi-Language Sync" if ml_done else "② Multi-Language Sync"
-        s2_disabled = not v2_done and step_num < 2
-        if st.button(s2_label, key="nav_step2", use_container_width=True,
-                     type="primary" if step_num == 2 else "secondary",
-                     disabled=s2_disabled):
-            go_to("multi_step2")
-            st.rerun()
-
-        # Step 3
-        s3_label = "✅ cURL Generator" if ml_done else "③ cURL Generator"
-        s3_disabled = not ml_done and step_num < 3
-        if st.button(s3_label, key="nav_step3", use_container_width=True,
-                     type="primary" if step_num == 3 else "secondary",
-                     disabled=s3_disabled):
-            go_to("multi_step3")
-            st.rerun()
-
-    st.divider()
-
-    # --- API Credentials ---
-    st.subheader("API Credentials")
+    st.header("API Credentials")
     retailer_id = st.text_input("Retailer ID (x-retailer-id)", type="default",
                                 help="Agency ID from Osmos developer settings")
     token = st.text_input("API Token (x-token)", type="password",
@@ -334,18 +271,57 @@ with st.sidebar:
     st.divider()
     st.caption(f"Batch: {BATCH_SIZE} | Rate: {RATE_LIMIT} req/s | Retries: {RETRY_ATTEMPTS}")
 
+    # Quick nav back to home
+    st.divider()
+    if st.button("← Start Over", use_container_width=True):
+        go_to("home")
+        st.rerun()
+
 has_creds = bool(retailer_id and token)
 remap = DEFAULT_REMAP
 current = st.session_state["page"]
 
 
 # =====================================================================
-# HOME — Landing page
+# HOME — Choose sync type
 # =====================================================================
 if current == "home":
     st.title("Osmos Feed Sync")
+    st.markdown("####")
+    st.subheader("What kind of feed sync do you want?")
     st.markdown("")
-    st.info("👈 Choose **Single Language** or **Multi-Language** from the sidebar to get started.")
+
+    col1, col2 = st.columns(2, gap="large")
+
+    with col1:
+        st.markdown(
+            """
+            ### Single Language
+            Sync one feed with **all fields** via the Feed V2 API.
+
+            - Upload a single CSV/TSV
+            - All columns sent as-is
+            - No language tagging
+            """
+        )
+        if st.button("Single Language →", key="go_single", type="primary", use_container_width=True):
+            go_to("single")
+            st.rerun()
+
+    with col2:
+        st.markdown(
+            """
+            ### Multi-Language
+            Sync the full feed **+ translated feeds** with language codes.
+
+            - Step 1: Feed V2 (all fields)
+            - Step 2: Multi-Language (text fields + ISO code)
+            - Step 3: cURL Generator
+            """
+        )
+        if st.button("Multi-Language →", key="go_multi", type="primary", use_container_width=True):
+            go_to("multi_step1")
+            st.rerun()
 
 
 # =====================================================================
@@ -411,6 +387,9 @@ elif current == "single":
 # MULTI-LANGUAGE — Step 1: Feed V2
 # =====================================================================
 elif current == "multi_step1":
+    # Step indicator
+    st.caption("Step 1 of 3")
+    st.progress(1 / 3)
     st.title("Step 1 — Feed Sync V2")
     st.caption("Upload the **full product feed**. All columns are sent as-is — nothing is filtered.")
 
@@ -460,12 +439,21 @@ elif current == "multi_step1":
                 for line in result.logs:
                     st.text(line)
 
+        st.markdown("---")
+        if st.session_state.get("v2_sync_done"):
+            if st.button("Next → Multi-Language Sync", type="primary", use_container_width=True):
+                go_to("multi_step2")
+                st.rerun()
+        else:
+            st.info("Complete Feed V2 sync successfully to proceed to the next step.")
 
 
 # =====================================================================
 # MULTI-LANGUAGE — Step 2: ML Sync
 # =====================================================================
 elif current == "multi_step2":
+    st.caption("Step 2 of 3")
+    st.progress(2 / 3)
     st.title("Step 2 — Multi-Language Sync")
     st.caption("Upload the **translated feed**. Only text fields are sent with the language code.")
 
@@ -532,12 +520,27 @@ elif current == "multi_step2":
                 for line in result.logs:
                     st.text(line)
 
+    st.markdown("---")
+    c_back, c_next = st.columns(2)
+    with c_back:
+        if st.button("← Back to Feed V2", use_container_width=True):
+            go_to("multi_step1")
+            st.rerun()
+    with c_next:
+        if st.session_state.get("ml_sync_done"):
+            if st.button("Next → cURL Generator", type="primary", use_container_width=True):
+                go_to("multi_step3")
+                st.rerun()
+        else:
+            st.info("Complete ML sync successfully to proceed.")
 
 
 # =====================================================================
 # MULTI-LANGUAGE — Step 3: cURL Generator
 # =====================================================================
 elif current == "multi_step3":
+    st.caption("Step 3 of 3")
+    st.progress(3 / 3)
     st.title("Step 3 — cURL Generator")
     st.caption("Generate copy-pasteable cURL commands for any single SKU.")
 
@@ -569,3 +572,8 @@ elif current == "multi_step3":
                 st.code(_make_curl(API_MULTI_LANG, retailer_id, token,
                                    {"language": ml_lang, "products": [ml_by_id[selected_sku]]}),
                         language="bash")
+
+    st.markdown("---")
+    if st.button("← Back to Multi-Language Sync", use_container_width=True):
+        go_to("multi_step2")
+        st.rerun()
