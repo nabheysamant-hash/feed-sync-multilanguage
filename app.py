@@ -292,13 +292,16 @@ def _api_request(session, method, url, headers, logs, label, payload=None, param
                 logs.append(f"[{label}] OK  response={json.dumps(data)[:300]}")
                 return True, data
             try:
-                error = resp.json().get("error", {})
+                body = resp.json()
+                error = body.get("error", {})
                 logs.append(f"[{label}] FAIL attempt={attempt}/{RETRY_ATTEMPTS} "
                             f"http={resp.status_code} code={error.get('code')} "
-                            f"msg={error.get('message')}")
+                            f"msg={error.get('message')} "
+                            f"details={error.get('details', [])} "
+                            f"full={json.dumps(body)[:500]}")
             except Exception:
                 logs.append(f"[{label}] FAIL attempt={attempt}/{RETRY_ATTEMPTS} "
-                            f"http={resp.status_code} body={resp.text[:300]}")
+                            f"http={resp.status_code} body={resp.text[:500]}")
         except requests.RequestException as exc:
             logs.append(f"[{label}] ERROR attempt={attempt}/{RETRY_ATTEMPTS} {exc}")
         if attempt < RETRY_ATTEMPTS:
@@ -307,14 +310,13 @@ def _api_request(session, method, url, headers, logs, label, payload=None, param
 
 
 def _adv_post(session, payload, headers, logs, label):
+    logs.append(f"[{label}] SENDING payload={json.dumps(payload)}")
     ok, _ = _api_request(session, "POST", API_ADVERTISER_CREATE, headers, logs, label, payload=payload)
     return ok
 
 
-def build_adv_payload(name, merchant_id, alias=None, merchant_type=None):
+def build_adv_payload(name, merchant_id, merchant_type=None):
     payload = {"name": name, "merchant_id": merchant_id}
-    if alias:
-        payload["alias"] = alias
     if merchant_type:
         payload["merchant_type"] = merchant_type
     return payload
@@ -333,7 +335,6 @@ def validate_adv_rows(rows):
             merchant_type = None
         valid.append(build_adv_payload(
             name=name, merchant_id=merchant_id,
-            alias=(row.get("alias") or "").strip() or None,
             merchant_type=merchant_type,
         ))
     return valid, skipped
@@ -799,16 +800,15 @@ elif current == "adv_main":
         col1, col2 = st.columns(2)
         with col1:
             s_name = st.text_input("Name *", placeholder="Acme Corp")
-            s_merchant_id = st.text_input("Merchant ID *", placeholder="acme_001")
+            s_merchant_id = st.text_input("Merchant ID *", placeholder="1000716")
         with col2:
-            s_alias = st.text_input("Alias", placeholder="acme (optional)")
             s_merchant_type = st.selectbox("Merchant Type", options=VALID_MERCHANT_TYPES,
                                            format_func=lambda x: x if x else "— not set —")
 
         if s_name and s_merchant_id:
             payload_preview = build_adv_payload(
                 name=s_name, merchant_id=s_merchant_id,
-                alias=s_alias or None, merchant_type=s_merchant_type or None,
+                merchant_type=s_merchant_type or None,
             )
             with st.expander("Payload preview", expanded=False):
                 st.json(payload_preview)
@@ -828,12 +828,12 @@ elif current == "adv_main":
             if not s_name or not s_merchant_id:
                 st.error("Name and Merchant ID are required.")
             else:
-                payload = build_adv_payload(s_name, s_merchant_id, s_alias or None, s_merchant_type or None)
+                payload = build_adv_payload(s_name, s_merchant_id, merchant_type=s_merchant_type or None)
                 st.success("Dry run — payload is valid.")
                 st.json(payload)
 
         if single_create:
-            payload = build_adv_payload(s_name, s_merchant_id, s_alias or None, s_merchant_type or None)
+            payload = build_adv_payload(s_name, s_merchant_id, merchant_type=s_merchant_type or None)
             logs = []
             session = requests.Session()
             with st.spinner("Creating advertiser..."):
